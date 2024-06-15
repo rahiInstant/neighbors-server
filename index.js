@@ -67,12 +67,16 @@ async function run() {
       const query = { email: userMail };
       const result = await postCollection
         .find(query)
-        .sort({postingTime:-1})
+        .sort({ postingTime: -1 })
         .toArray();
       console.log(result);
       res.send(result);
     });
 
+    app.get("/all-post", async (req, res) => {
+      const result = await postCollection.find().toArray();
+      res.send(result);
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
