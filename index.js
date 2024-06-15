@@ -62,7 +62,16 @@ async function run() {
       // console.log(data)
       res.send(result);
     });
-
+    app.get("/show-post", async (req, res) => {
+      const userMail = req.query?.email;
+      const query = { email: userMail };
+      const result = await postCollection
+        .find(query)
+        .sort({postingTime:-1})
+        .toArray();
+      console.log(result);
+      res.send(result);
+    });
 
 
     await client.db("admin").command({ ping: 1 });
