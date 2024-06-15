@@ -48,7 +48,11 @@ async function run() {
       res.send(result);
     });
 
-
+    app.get("/check-admin", async (req, res) => {
+      const email = req.body?.email
+      const check =await isUserExist(email)
+      res.send({isAdmin:check?.isAdmin})      
+    });
 
     await client.db("admin").command({ ping: 1 });
     console.log(
