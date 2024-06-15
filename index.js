@@ -49,10 +49,18 @@ async function run() {
     });
 
     app.get("/check-admin", async (req, res) => {
-      const email = req.body?.email
+      const email = req.query?.email
       const check =await isUserExist(email)
       res.send({isAdmin:check?.isAdmin})      
     });
+
+    app.post('/user-post', async(req, res) => {
+      const data = req.body
+      const result =await postCollection.insertOne(data)
+      console.log(result)
+      console.log(data)
+      res.send(result)
+    })
 
     await client.db("admin").command({ ping: 1 });
     console.log(
