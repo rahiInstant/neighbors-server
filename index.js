@@ -78,45 +78,45 @@ async function run() {
     app.get("/all-post", async (req, res) => {
       // const result = await postCollection.find().toArray();
       const result = await postCollection
-      .aggregate([
-        {
-          $lookup: {
-            from: "user",
-            let: { userEmail: "$email" },
-            pipeline: [
-              {
-                $match: {
-                  $expr: { $eq: ["$email", "$$userEmail"] },
+        .aggregate([
+          {
+            $lookup: {
+              from: "user",
+              let: { userEmail: "$email" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ["$email", "$$userEmail"] },
+                  },
                 },
-              },
-              {
-                $project: {
-                  _id: 0,
-                  name: 1,
-                  email: 1,
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
                 },
-              },
-            ],
-            as: "userInfo",
-          },
-        },
-        {
-          $unwind: "$userInfo",
-        },
-        {
-          $replaceRoot: {
-            newRoot: {
-              $mergeObjects: ["$userInfo", "$$ROOT"],
+              ],
+              as: "userInfo",
             },
           },
-        },
-        {
-          $project: {
-            userInfo: 0,
+          {
+            $unwind: "$userInfo",
           },
-        },
-      ])
-      .toArray();
+          {
+            $replaceRoot: {
+              newRoot: {
+                $mergeObjects: ["$userInfo", "$$ROOT"],
+              },
+            },
+          },
+          {
+            $project: {
+              userInfo: 0,
+            },
+          },
+        ])
+        .toArray();
       res.send(result);
     });
 
@@ -254,8 +254,24 @@ async function run() {
       const commentId = req.query.commentId;
       const query = { commentId: commentId };
       const result = await feedCollection.findOne(query);
-      res.send({isExist:result?true:false});
+      res.send({ isExist: result ? true : false });
     });
+
+    app.get("/estimated-data", async (req, res) => {
+      const users = await userCollection.estimatedDocumentCount();
+      const post = await postCollection.estimatedDocumentCount();
+      const comment = await commentCollection.estimatedDocumentCount();
+      // console.log(users, post, comment);
+      res.send([
+        { key: "users", value: users },
+        { key: "post", value: post },
+        { key: "comment", value: comment },
+      ]);
+    });
+    
+    app.post('/add-tag', async(req, res) => {
+      
+    })
 
     await client.db("admin").command({ ping: 1 });
     console.log(
