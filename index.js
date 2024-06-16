@@ -99,7 +99,51 @@ async function run() {
       res.send(result);
     });
     app.get("/all-user-comment", async (req, res) => {
-      const result = await commentCollection.find().toArray();
+      const postId = req.query.postId;
+      const result = await commentCollection
+        .aggregate([
+          {
+            $match: { postId: postId },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: { userEmail: "$email" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ["$email", "$$userEmail"] },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
+                },
+              ],
+              as: "userInfo",
+            },
+          },
+          {
+            $unwind: "$userInfo",
+          },
+          {
+            $replaceRoot: {
+              newRoot: {
+                $mergeObjects: ["$userInfo", "$$ROOT"],
+              },
+            },
+          },
+          {
+            $project: {
+              userInfo: 0,
+            },
+          },
+        ])
+        .toArray();
+      console.log(req.query, result);
       res.send(result);
     });
     await client.db("admin").command({ ping: 1 });
