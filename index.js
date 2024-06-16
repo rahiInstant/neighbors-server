@@ -23,6 +23,8 @@ async function run() {
   try {
     await client.connect();
 
+    // aggregate Obj
+
     // Database and collection
     const neighborDB = client.db("neighborDB");
     const userCollection = neighborDB.collection("user");
@@ -76,8 +78,66 @@ async function run() {
       res.send(result);
     });
 
+    app.get("/get-user-post", async (req, res) => {
+      const tag = req.query.tag;
+      const result = await postCollection
+        .aggregate([
+          {
+            $match: { tags: tag },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: { userEmail: "$email" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ["$email", "$$userEmail"] },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
+                },
+              ],
+              as: "userInfo",
+            },
+          },
+          {
+            $unwind: "$userInfo",
+          },
+          {
+            $replaceRoot: {
+              newRoot: {
+                $mergeObjects: ["$userInfo", "$$ROOT"],
+              },
+            },
+          },
+          {
+            $project: {
+              userInfo: 0,
+            },
+          },
+        ])
+        .toArray();
+      res.send(result);
+    });
+
+    app.get("/all-user", async (req, res) => {
+      const result = await userCollection.find().toArray();
+      // console.log(result);
+      res.send(result);
+    });
+
     app.get("/all-post", async (req, res) => {
       // const result = await postCollection.find().toArray();
+      const data = req.query;
+      const searchText = data.search;
+      const sortText = data.sort;
+      console.log(data);
       const result = await postCollection
         .aggregate([
           {
@@ -272,21 +332,34 @@ async function run() {
 
     app.post("/add-tag", async (req, res) => {
       const data = req.body;
-      const result =await tagCollection.insertOne(data);
+      const result = await tagCollection.insertOne(data);
       res.send(result);
     });
-   
-    // app.get('/all-tag', async(req, res) => {
-    //   const result = await tagCollection.find().toArray()
-    //   res.send(result)
-    // })
-   
+
+    app.get("/all-tag", async (req, res) => {
+      const result = await tagCollection.find().toArray();
+      // console.log(result);
+      res.send(result);
+    });
+    app.patch("/make-admin", async (req, res) => {
+      const email = req.body.email;
+      const query = { email: email };
+      const updateDoc = {
+        $set: {
+          isAdmin: true,
+        },
+      };
+
+      const result = await userCollection.updateOne(query, updateDoc);
+      res.send(result)
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
   } finally {
-    // do something.
+    // do something
   }
 }
 run().catch(console.dir);
