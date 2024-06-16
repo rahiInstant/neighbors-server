@@ -98,7 +98,10 @@ async function run() {
       const result = await commentCollection.insertOne(data);
       res.send(result);
     });
-
+    app.get("/all-user-comment", async (req, res) => {
+      const result = await commentCollection.find().toArray();
+      res.send(result);
+    });
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
