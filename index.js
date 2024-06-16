@@ -76,7 +76,47 @@ async function run() {
     });
 
     app.get("/all-post", async (req, res) => {
-      const result = await postCollection.find().toArray();
+      // const result = await postCollection.find().toArray();
+      const result = await postCollection
+      .aggregate([
+        {
+          $lookup: {
+            from: "user",
+            let: { userEmail: "$email" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$email", "$$userEmail"] },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  name: 1,
+                  email: 1,
+                },
+              },
+            ],
+            as: "userInfo",
+          },
+        },
+        {
+          $unwind: "$userInfo",
+        },
+        {
+          $replaceRoot: {
+            newRoot: {
+              $mergeObjects: ["$userInfo", "$$ROOT"],
+            },
+          },
+        },
+        {
+          $project: {
+            userInfo: 0,
+          },
+        },
+      ])
+      .toArray();
       res.send(result);
     });
 
@@ -206,8 +246,15 @@ async function run() {
 
     app.post("/comment-feedback", async (req, res) => {
       const data = req.body;
-      const result =await feedCollection.insertOne(data);
+      const result = await feedCollection.insertOne(data);
       res.send(result);
+    });
+
+    app.get("/check-report", async (req, res) => {
+      const commentId = req.query.commentId;
+      const query = { commentId: commentId };
+      const result = await feedCollection.findOne(query);
+      res.send({isExist:result?true:false});
     });
 
     await client.db("admin").command({ ping: 1 });
