@@ -27,6 +27,7 @@ async function run() {
     const neighborDB = client.db("neighborDB");
     const userCollection = neighborDB.collection("user");
     const postCollection = neighborDB.collection("post");
+    const commentCollection = neighborDB.collection("comment");
 
     // common parts
 
@@ -78,13 +79,29 @@ async function run() {
       res.send(result);
     });
 
-    app.delete('/delete-post', async(req, res) => {
-      const postId = req.query?.postId
-      const query = {_id: new ObjectId(postId)}
-      const result =await postCollection.deleteOne(query)
-      res.send(result)
-    })
+    app.delete("/delete-post", async (req, res) => {
+      const postId = req.query?.postId;
+      const query = { _id: new ObjectId(postId) };
+      const result = await postCollection.deleteOne(query);
+      res.send(result);
+    });
 
+    app.get("/post-detail", async (req, res) => {
+      const postId = req.query?.postId;
+      const query = { _id: new ObjectId(postId) };
+      const result = await postCollection.findOne(query);
+      res.send(result);
+    });
+
+    app.post("/user-comment", async (req, res) => {
+      const data = req.body;
+      const result = await commentCollection.insertOne(data);
+      res.send(result);
+    });
+    app.get("/all-user-comment", async (req, res) => {
+      const result = await commentCollection.find().toArray();
+      res.send(result);
+    });
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
