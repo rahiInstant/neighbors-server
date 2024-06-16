@@ -28,6 +28,7 @@ async function run() {
     const userCollection = neighborDB.collection("user");
     const postCollection = neighborDB.collection("post");
     const commentCollection = neighborDB.collection("comment");
+    const feedCollection = neighborDB.collection("feed");
 
     // common parts
 
@@ -89,8 +90,52 @@ async function run() {
     app.get("/post-detail", async (req, res) => {
       const postId = req.query?.postId;
       const query = { _id: new ObjectId(postId) };
-      const result = await postCollection.findOne(query);
-      res.send(result);
+      // const result = await postCollection.findOne(query);
+      const result = await postCollection
+        .aggregate([
+          {
+            $match: { _id: new ObjectId(postId) },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: { userEmail: "$email" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ["$email", "$$userEmail"] },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
+                },
+              ],
+              as: "userInfo",
+            },
+          },
+          {
+            $unwind: "$userInfo",
+          },
+          {
+            $replaceRoot: {
+              newRoot: {
+                $mergeObjects: ["$userInfo", "$$ROOT"],
+              },
+            },
+          },
+          {
+            $project: {
+              userInfo: 0,
+            },
+          },
+        ])
+        .toArray();
+      // console.log(result)
+      res.send(result[0]);
     });
 
     app.post("/user-comment", async (req, res) => {
@@ -143,9 +188,28 @@ async function run() {
           },
         ])
         .toArray();
-      console.log(req.query, result);
       res.send(result);
     });
+
+    app.patch("/update-reaction", async (req, res) => {
+      const postId = req.query.postId;
+      const data = req.body;
+      const query = { _id: new ObjectId(postId) };
+      updateDoc = {
+        $inc: {
+          ...data,
+        },
+      };
+      const result = await postCollection.updateOne(query, updateDoc);
+      res.send(result);
+    });
+
+    app.post("/comment-feedback", async (req, res) => {
+      const data = req.body;
+      const result =await feedCollection.insertOne(data);
+      res.send(result);
+    });
+
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
