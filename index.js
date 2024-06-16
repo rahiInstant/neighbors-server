@@ -29,6 +29,7 @@ async function run() {
     const postCollection = neighborDB.collection("post");
     const commentCollection = neighborDB.collection("comment");
     const feedCollection = neighborDB.collection("feed");
+    const tagCollection = neighborDB.collection("tag");
 
     // common parts
 
@@ -268,11 +269,18 @@ async function run() {
         { key: "comment", value: comment },
       ]);
     });
-    
-    app.post('/add-tag', async(req, res) => {
-      
-    })
 
+    app.post("/add-tag", async (req, res) => {
+      const data = req.body;
+      const result =await tagCollection.insertOne(data);
+      res.send(result);
+    });
+   
+    // app.get('/all-tag', async(req, res) => {
+    //   const result = await tagCollection.find().toArray()
+    //   res.send(result)
+    // })
+   
     await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
