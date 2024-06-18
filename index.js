@@ -7,7 +7,12 @@ const port = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
+const {
+  MongoClient,
+  ServerApiVersion,
+  ObjectId,
+  serialize,
+} = require("mongodb");
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@neighbors.bfwh7rr.mongodb.net/?retryWrites=true&w=majority&appName=neighbors`;
 
 // Create a MongoClient with a MongoClientOptions object to set the Stable API version
@@ -32,6 +37,7 @@ async function run() {
     const commentCollection = neighborDB.collection("comment");
     const feedCollection = neighborDB.collection("feed");
     const tagCollection = neighborDB.collection("tag");
+    const announcementCollection = neighborDB.collection("announce");
 
     // common parts
 
@@ -78,54 +84,6 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/get-user-post", async (req, res) => {
-      const tag = req.query.tag;
-      const result = await postCollection
-        .aggregate([
-          {
-            $match: { tags: tag },
-          },
-          {
-            $lookup: {
-              from: "user",
-              let: { userEmail: "$email" },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: { $eq: ["$email", "$$userEmail"] },
-                  },
-                },
-                {
-                  $project: {
-                    _id: 0,
-                    name: 1,
-                    email: 1,
-                  },
-                },
-              ],
-              as: "userInfo",
-            },
-          },
-          {
-            $unwind: "$userInfo",
-          },
-          {
-            $replaceRoot: {
-              newRoot: {
-                $mergeObjects: ["$userInfo", "$$ROOT"],
-              },
-            },
-          },
-          {
-            $project: {
-              userInfo: 0,
-            },
-          },
-        ])
-        .toArray();
-      res.send(result);
-    });
-
     app.get("/all-user", async (req, res) => {
       const result = await userCollection.find().toArray();
       // console.log(result);
@@ -133,51 +91,91 @@ async function run() {
     });
 
     app.get("/all-post", async (req, res) => {
-      // const result = await postCollection.find().toArray();
       const data = req.query;
       const searchText = data.search;
-      const sortText = data.sort;
-      console.log(data);
-      const result = await postCollection
-        .aggregate([
-          {
-            $lookup: {
-              from: "user",
-              let: { userEmail: "$email" },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: { $eq: ["$email", "$$userEmail"] },
-                  },
+      // const sort = data.sort;
+      const aggregateArr = [
+        {
+          $lookup: {
+            from: "user",
+            let: { userEmail: "$email" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ["$email", "$$userEmail"] },
                 },
-                {
-                  $project: {
-                    _id: 0,
-                    name: 1,
-                    email: 1,
-                  },
-                },
-              ],
-              as: "userInfo",
-            },
-          },
-          {
-            $unwind: "$userInfo",
-          },
-          {
-            $replaceRoot: {
-              newRoot: {
-                $mergeObjects: ["$userInfo", "$$ROOT"],
               },
+              {
+                $project: {
+                  _id: 0,
+                  name: 1,
+                  email: 1,
+                },
+              },
+            ],
+            as: "userInfo",
+          },
+        },
+        {
+          $unwind: "$userInfo",
+        },
+        {
+          $replaceRoot: {
+            newRoot: {
+              $mergeObjects: ["$userInfo", "$$ROOT"],
             },
           },
-          {
-            $project: {
-              userInfo: 0,
+        },
+        {
+          $lookup: {
+            from: "comment",
+            let: { postId: "$_id" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $eq: [{ $toObjectId: "$postId" }, "$$postId"],
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: "$postId",
+                  commentCount: { $sum: 1 },
+                },
+              },
+              {
+                $project: {
+                  _id: 0,
+                  commentCount: 1,
+                },
+              },
+            ],
+            as: "comments",
+          },
+        },
+        {
+          $addFields: {
+            commentCount: {
+              $ifNull: [{ $arrayElemAt: ["$comments.commentCount", 0] }, 0],
             },
           },
-        ])
-        .toArray();
+        },
+        {
+          $project: {
+            userInfo: 0,
+            comments: 0,
+          },
+        },
+      ];
+
+      if (searchText !== "") {
+        aggregateArr.unshift({
+          $match: { tags: { $regex: searchText, $options: "i" } },
+        });
+      }
+
+      const result = await postCollection.aggregate(aggregateArr).toArray();
       res.send(result);
     });
 
@@ -235,7 +233,6 @@ async function run() {
           },
         ])
         .toArray();
-      // console.log(result)
       res.send(result[0]);
     });
 
@@ -315,6 +312,7 @@ async function run() {
       const commentId = req.query.commentId;
       const query = { commentId: commentId };
       const result = await feedCollection.findOne(query);
+      console.log(result);
       res.send({ isExist: result ? true : false });
     });
 
@@ -351,7 +349,23 @@ async function run() {
       };
 
       const result = await userCollection.updateOne(query, updateDoc);
-      res.send(result)
+      res.send(result);
+    });
+
+    app.get("/all-feed", async (req, res) => {
+      const result = await feedCollection.find().toArray();
+      res.send(result);
+    });
+
+    app.post("/store-announcement", async (req, res) => {
+      const data = req.body;
+      const result = await announcementCollection.insertOne(data);
+      res.send(result);
+    });
+
+    app.get("/get-announcement", async (req, res) => {
+      const result = await announcementCollection.find().toArray();
+      res.send(result);
     });
 
     await client.db("admin").command({ ping: 1 });
