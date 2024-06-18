@@ -68,9 +68,8 @@ async function run() {
     // user post related API
     app.post("/user-post", async (req, res) => {
       const data = req.body;
+      // data["postingTime"] = new Date();
       const result = await postCollection.insertOne(data);
-      // console.log(result)
-      // console.log(data)
       res.send(result);
     });
     app.get("/show-post", async (req, res) => {
@@ -80,20 +79,18 @@ async function run() {
         .find(query)
         .sort({ postingTime: -1 })
         .toArray();
-      // console.log(result);
       res.send(result);
     });
 
     app.get("/all-user", async (req, res) => {
       const result = await userCollection.find().toArray();
-      // console.log(result);
       res.send(result);
     });
 
     app.get("/all-post", async (req, res) => {
       const data = req.query;
       const searchText = data.search;
-      // const sort = data.sort;
+      const isSort = data.sort == "true";
       const aggregateArr = [
         {
           $lookup: {
@@ -175,7 +172,17 @@ async function run() {
         });
       }
 
-      const result = await postCollection.aggregate(aggregateArr).toArray();
+      if (isSort) {
+        aggregateArr.splice(5, 0, {
+          $addFields: {
+            voteDifference: { $subtract: ["$upVote", "$downVote"] },
+          },
+        });
+      }
+      const result = await postCollection
+        .aggregate(aggregateArr)
+        .sort(isSort ? { voteDifference: -1 } : { postingTime: -1 })
+        .toArray();
       res.send(result);
     });
 
@@ -280,8 +287,36 @@ async function run() {
             },
           },
           {
+            $lookup: {
+              from: "feed",
+              let: { commentId: "$_id" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: [{ $toObjectId: "$commentId" }, "$$commentId"],
+                    },
+                  },
+                },
+              ],
+              as: "reportInfo",
+            },
+          },
+          {
+            $addFields: {
+              isExistInReport: {
+                $cond: {
+                  if: { $gt: [{ $size: "$reportInfo" }, 0] },
+                  then: true,
+                  else: false,
+                },
+              },
+            },
+          },
+          {
             $project: {
               userInfo: 0,
+              reportInfo: 0,
             },
           },
         ])
@@ -353,7 +388,133 @@ async function run() {
     });
 
     app.get("/all-feed", async (req, res) => {
-      const result = await feedCollection.find().toArray();
+      const result = await feedCollection
+        .aggregate([
+          {
+            $lookup: {
+              from: "user",
+              let: { commenterEmail: "$emailComment" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$email", "$$commenterEmail"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
+                },
+              ],
+              as: "commenterInfo",
+            },
+          },
+          {
+            $unwind: "$commenterInfo",
+          },
+          {
+            $lookup: {
+              from: "comment",
+              let: { commentId: "$commentId" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", { $toObjectId: "$$commentId" }],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    comment: 1,
+                  },
+                },
+              ],
+              as: "commentText",
+            },
+          },
+          {
+            $unwind: "$commentText",
+          },
+          {
+            $addFields: {
+              commenterInfo: {
+                $mergeObjects: ["$commenterInfo", "$commentText"],
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: "user",
+              let: { authorEmail: "$emailBlock" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$email", "$$authorEmail"],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    name: 1,
+                    email: 1,
+                  },
+                },
+              ],
+              as: "authorInfo",
+            },
+          },
+          {
+            $unwind: "$authorInfo",
+          },
+          {
+            $lookup: {
+              from: "post",
+              let: { postId: "$postId" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$_id", { $toObjectId: "$$postId" }],
+                    },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                  },
+                },
+              ],
+              as: "postInfo",
+            },
+          },
+          {
+            $unwind: "$postInfo",
+          },
+          {
+            $addFields: {
+              authorInfo: {
+                $mergeObjects: ["$authorInfo", "$postInfo"],
+              },
+            },
+          },
+          {
+            $project: {
+              emailBlock: 0,
+              emailComment: 0,
+              postInfo: 0,
+              commentText: 0,
+            },
+          },
+        ])
+        .toArray();
       res.send(result);
     });
 
