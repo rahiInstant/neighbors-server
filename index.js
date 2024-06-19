@@ -115,10 +115,29 @@ async function run() {
 
     app.get("/all-post", async (req, res) => {
       const data = req.query;
-      const postCount = await postCollection.countDocuments();
       const searchText = data.search;
+      const skipAmount = parseInt(data.currentPage) * 10;
+      console.log(skipAmount);
       const isSort = data.sort == "true";
+      async function countFunc() {
+        let postCount;
+        if (searchText != "") {
+          const searchQuery = { tags: searchText };
+          postCount = await postCollection.countDocuments(searchQuery);
+        } else {
+          postCount = await postCollection.estimatedDocumentCount();
+        }
+        return postCount;
+      }
+
       const aggregateArr = [
+        ,
+        {
+          $skip: skipAmount,
+        },
+        {
+          $limit: 10,
+        },
         {
           $lookup: {
             from: "user",
@@ -194,23 +213,34 @@ async function run() {
       ];
 
       if (searchText !== "") {
-        aggregateArr.unshift({
+        aggregateArr.splice(1, 0, {
           $match: { tags: { $regex: searchText, $options: "i" } },
         });
       }
 
       if (isSort) {
-        aggregateArr.splice(5, 0, {
-          $addFields: {
-            voteDifference: { $subtract: ["$upVote", "$downVote"] },
+        aggregateArr.splice(
+          0,
+          0,
+          {
+            $addFields: {
+              voteDifference: { $subtract: ["$upVote", "$downVote"] },
+            },
           },
+          {
+            $sort: { voteDifference: -1 },
+          }
+        );
+      } else {
+        aggregateArr.splice(0, 0, {
+          $sort: { _id: -1 },
         });
       }
       const result = await postCollection
         .aggregate(aggregateArr)
-        .sort(isSort ? { voteDifference: -1 } : { postingTime: -1 })
+        // .sort(isSort ? { voteDifference: -1 } : { _id: -1 })
         .toArray();
-      res.send(result);
+      res.send([await countFunc(), result]);
     });
 
     app.delete("/delete-post", async (req, res) => {
@@ -572,11 +602,13 @@ async function run() {
         const commenterId = data.commenterId;
         const deleteUserQuery = { _id: new ObjectId(commenterId) };
         const deleteCommentQuery = { email: commenterEmail };
-        const deleteReportQuery = { emailBlock: commenterEmail };
+        const deleteReportQuery = { emailComment: commenterEmail };
         const deleteResult = await userCollection.deleteOne(deleteUserQuery);
         const banUserStore = await banUserCollection.insertOne(banUserObj);
-        const commentDelete = await commentCollection.deleteOne(deleteCommentQuery);
-        const reportDelete = await feedCollection.deleteOne(deleteReportQuery);
+        const commentDelete = await commentCollection.deleteMany(
+          deleteCommentQuery
+        );
+        const reportDelete = await feedCollection.deleteMany(deleteReportQuery);
         const userRecord = await admin.auth().getUserByEmail(commenterEmail);
         await admin.auth().deleteUser(userRecord.uid);
         res.send({
