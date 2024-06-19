@@ -4,6 +4,7 @@ require("dotenv").config();
 const admin = require("firebase-admin");
 const serviceAccount = require("./neighbors-48cfb-firebase-adminsdk-e6j9r-d947c8575f.json");
 const cors = require("cors");
+const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 
 app.use(cors());
@@ -43,6 +44,7 @@ async function run() {
     const tagCollection = neighborDB.collection("tag");
     const announcementCollection = neighborDB.collection("announce");
     const banUserCollection = neighborDB.collection("ban");
+    const paymentCollection = neighborDB.collection("pay");
 
     // common parts
 
@@ -131,7 +133,6 @@ async function run() {
       }
 
       const aggregateArr = [
-        ,
         {
           $skip: skipAmount,
         },
@@ -212,12 +213,6 @@ async function run() {
         },
       ];
 
-      if (searchText !== "") {
-        aggregateArr.splice(1, 0, {
-          $match: { tags: { $regex: searchText, $options: "i" } },
-        });
-      }
-
       if (isSort) {
         aggregateArr.splice(
           0,
@@ -232,14 +227,18 @@ async function run() {
           }
         );
       } else {
-        aggregateArr.splice(0, 0, {
+        aggregateArr.unshift({
           $sort: { _id: -1 },
         });
       }
-      const result = await postCollection
-        .aggregate(aggregateArr)
-        // .sort(isSort ? { voteDifference: -1 } : { _id: -1 })
-        .toArray();
+      if (searchText !== "") {
+        aggregateArr.splice(1, 0, {
+          $match: { tags: { $regex: searchText, $options: "i" } },
+        });
+      }
+      // console.log(aggregateArr);
+      // console.log(await countFunc())
+      const result = await postCollection.aggregate(aggregateArr).toArray();
       res.send([await countFunc(), result]);
     });
 
@@ -626,6 +625,29 @@ async function run() {
         const result = await feedCollection.deleteOne(deleteReportQuery);
         res.send(result);
       }
+    });
+
+    app.post("/create-payment-intent", async (req, res) => {
+      const { pay } = req.body;
+      console.log(pay);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: pay * 100,
+        currency: "usd",
+        payment_method_types: ["card"],
+      });
+      res.send({ clientSecret: paymentIntent.client_secret });
+    });
+
+    app.post("/payment", async (req, res) => {
+      const data = req.body;
+      const query = {email:req.body.email}
+      const updateDoc = {
+        $set:{
+          
+        }
+      }
+      const storeInPay = await paymentCollection.insertMany(data)
+
     });
 
     await client.db("admin").command({ ping: 1 });
