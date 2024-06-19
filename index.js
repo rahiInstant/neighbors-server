@@ -1,12 +1,16 @@
 const express = require("express");
 const app = express();
 require("dotenv").config();
+const admin = require("firebase-admin");
+const serviceAccount = require("./neighbors-48cfb-firebase-adminsdk-e6j9r-d947c8575f.json");
 const cors = require("cors");
 const port = process.env.PORT || 5000;
 
 app.use(cors());
 app.use(express.json());
-
+admin.initializeApp({
+  credential: admin.credential.cert(serviceAccount),
+});
 const {
   MongoClient,
   ServerApiVersion,
@@ -38,6 +42,7 @@ async function run() {
     const feedCollection = neighborDB.collection("feed");
     const tagCollection = neighborDB.collection("tag");
     const announcementCollection = neighborDB.collection("announce");
+    const banUserCollection = neighborDB.collection("ban");
 
     // common parts
 
@@ -65,6 +70,27 @@ async function run() {
       res.send({ isAdmin: check?.isAdmin });
     });
 
+    app.get("/check-ban-user", async (req, res) => {
+      const userMail = req.query.email;
+      const query = { email: userMail };
+      const result = await banUserCollection.findOne(query);
+      console.log(result);
+      if (result) {
+        const { email, banFreeDate } = result;
+        const day = Math.floor((banFreeDate - new Date()) / (24 * 3600 * 1000));
+        if (userMail === email) {
+          if (day > 0) {
+            return res.send({ banUser: true, leftDay: day });
+          } else {
+            const result = await banUserCollection.deleteOne(query);
+            return res.send({ banUser: false });
+          }
+        }
+      }
+
+      res.send({ banUser: false });
+    });
+
     // user post related API
     app.post("/user-post", async (req, res) => {
       const data = req.body;
@@ -89,6 +115,7 @@ async function run() {
 
     app.get("/all-post", async (req, res) => {
       const data = req.query;
+      const postCount = await postCollection.countDocuments();
       const searchText = data.search;
       const isSort = data.sort == "true";
       const aggregateArr = [
@@ -404,7 +431,6 @@ async function run() {
                 },
                 {
                   $project: {
-                    _id: 0,
                     name: 1,
                     email: 1,
                   },
@@ -527,6 +553,47 @@ async function run() {
     app.get("/get-announcement", async (req, res) => {
       const result = await announcementCollection.find().toArray();
       res.send(result);
+    });
+
+    app.post("/report-action", async (req, res) => {
+      const data = req.body;
+      const action = data.action;
+      const deleteCommentQuery = { _id: new ObjectId(data.commentId) };
+      const deleteReportQuery = { _id: new ObjectId(data.reportId) };
+      if (action == "ban-user") {
+        const commenterEmail = req.body.commenterEmail;
+        const banFreeDate = new Date(
+          new Date().setMonth(new Date().getMonth() + 1)
+        );
+        const banUserObj = {
+          email: commenterEmail,
+          banFreeDate,
+        };
+        const commenterId = data.commenterId;
+        const deleteUserQuery = { _id: new ObjectId(commenterId) };
+        const deleteCommentQuery = { email: commenterEmail };
+        const deleteReportQuery = { emailBlock: commenterEmail };
+        const deleteResult = await userCollection.deleteOne(deleteUserQuery);
+        const banUserStore = await banUserCollection.insertOne(banUserObj);
+        const commentDelete = await commentCollection.deleteOne(deleteCommentQuery);
+        const reportDelete = await feedCollection.deleteOne(deleteReportQuery);
+        const userRecord = await admin.auth().getUserByEmail(commenterEmail);
+        await admin.auth().deleteUser(userRecord.uid);
+        res.send({
+          deleteResult,
+          banUserStore,
+          commentDelete,
+          reportDelete,
+          userDeleteFromFirebase: true,
+        });
+      } else if (action == "delete-comment") {
+        const result = await commentCollection.deleteOne(deleteCommentQuery);
+        const reportDelete = await feedCollection.deleteOne(deleteReportQuery);
+        res.send({ result, reportDelete });
+      } else if (action == "delete-report") {
+        const result = await feedCollection.deleteOne(deleteReportQuery);
+        res.send(result);
+      }
     });
 
     await client.db("admin").command({ ping: 1 });
