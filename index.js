@@ -4,10 +4,16 @@ require("dotenv").config();
 const admin = require("firebase-admin");
 const serviceAccount = require("./neighbors-48cfb-firebase-adminsdk-e6j9r-d947c8575f.json");
 const cors = require("cors");
+const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
 const port = process.env.PORT || 5000;
 
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://localhost:5173"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 admin.initializeApp({
   credential: admin.credential.cert(serviceAccount),
@@ -47,29 +53,134 @@ async function run() {
     const paymentCollection = neighborDB.collection("pay");
 
     // common parts
-
-    const isUserExist = async (userMail) => {
-      const filter = { email: userMail };
-      const result = await userCollection.findOne(filter);
-      return result;
+    const logger = () => {};
+    const verifyToken = (req, res, next) => {
+      if (!req.headers.authorization) {
+        return res.status(401).send({ message: "forbidden access" });
+      }
+      const token = req.headers.authorization.split("_")[1];
+      console.log(token);
+      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decode) => {
+        if (err) {
+          console.log(err);
+          return res.status(403).send({ message: "unauthorized" });
+        }
+        req.decode = decode;
+        console.log(req.decode);
+        next();
+      });
     };
+
+    const verifyAdmin = async (req, res, next) => {
+      const email = req.decode.email;
+      const filter = { email: email };
+      const option = {
+        projection: { _id: 0, isAdmin: 1 },
+      };
+      const result = await userCollection.findOne(filter, option);
+      console.log(result);
+      if (result) {
+        if (!result.isAdmin) {
+          return res.status(403).send({ message: "forbidden access" });
+        }
+        next();
+      }
+    };
+
+    // JSON web token
+    app.post("/jwt", async (req, res) => {
+      const user = req.body;
+      console.log(user);
+      const access_token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+        expiresIn: "1h",
+      });
+      res.send({ access_token });
+    });
 
     // user related API
     app.post("/user-registration", async (req, res) => {
       const data = req.body;
       const query = { email: req?.body?.email };
-      // const isUserExist = await userCollection.findOne(query);
-      if (await isUserExist(data?.email)) {
+      const isUserExist = await userCollection.findOne(query);
+      if (isUserExist) {
         return res.send({ acknowledged: false, insertedId: null });
       }
       const result = await userCollection.insertOne(data);
       res.send(result);
     });
 
-    app.get("/check-admin", async (req, res) => {
+    app.get("/user-info", verifyToken, async (req, res) => {
       const email = req.query?.email;
-      const check = await isUserExist(email);
-      res.send({ isAdmin: check?.isAdmin });
+      const filter = { email: email };
+      const result = await userCollection
+        .aggregate([
+          {
+            $match: { email: email },
+          },
+          {
+            $lookup: {
+              from: "pay",
+              localField: "email",
+              foreignField: "email",
+              as: "paymentData",
+            },
+          },
+          {
+            $unwind: {
+              path: "$paymentData",
+              preserveNullAndEmptyArrays: true,
+            },
+          },
+          {
+            $addFields: {
+              paymentData: {
+                $ifNull: ["$paymentData", {}],
+              },
+            },
+          },
+          {
+            $lookup: {
+              from: "post",
+              let: { email: email },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $eq: ["$email", "$$email"],
+                    },
+                  },
+                },
+                {
+                  $group: {
+                    _id: "email",
+                    postCount: { $sum: 1 },
+                  },
+                },
+                {
+                  $project: {
+                    _id: 0,
+                    postCount: 1,
+                  },
+                },
+              ],
+              as: "posts",
+            },
+          },
+          {
+            $addFields: {
+              postCount: {
+                $ifNull: [{ $arrayElemAt: ["$posts.postCount", 0] }, 0],
+              },
+            },
+          },
+          {
+            $project: {
+              posts: 0,
+            },
+          },
+        ])
+        .toArray();
+      res.send(result ? result[0] : {});
     });
 
     app.get("/check-ban-user", async (req, res) => {
@@ -94,13 +205,13 @@ async function run() {
     });
 
     // user post related API
-    app.post("/user-post", async (req, res) => {
+    app.post("/user-post", verifyToken, async (req, res) => {
       const data = req.body;
       // data["postingTime"] = new Date();
       const result = await postCollection.insertOne(data);
       res.send(result);
     });
-    app.get("/show-post", async (req, res) => {
+    app.get("/show-post", verifyToken, async (req, res) => {
       const userMail = req.query?.email;
       const query = { email: userMail };
       const result = await postCollection
@@ -110,7 +221,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/all-user", async (req, res) => {
+    app.get("/all-user", verifyToken, verifyAdmin, async (req, res) => {
       const result = await userCollection.find().toArray();
       res.send(result);
     });
@@ -242,7 +353,7 @@ async function run() {
       res.send([await countFunc(), result]);
     });
 
-    app.delete("/delete-post", async (req, res) => {
+    app.delete("/delete-post",verifyToken, async (req, res) => {
       const postId = req.query?.postId;
       const query = { _id: new ObjectId(postId) };
       const result = await postCollection.deleteOne(query);
@@ -299,12 +410,12 @@ async function run() {
       res.send(result[0]);
     });
 
-    app.post("/user-comment", async (req, res) => {
+    app.post("/user-comment",verifyToken, async (req, res) => {
       const data = req.body;
       const result = await commentCollection.insertOne(data);
       res.send(result);
     });
-    app.get("/all-user-comment", async (req, res) => {
+    app.get("/all-user-comment",verifyToken, async (req, res) => {
       const postId = req.query.postId;
       const result = await commentCollection
         .aggregate([
@@ -393,7 +504,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/comment-feedback", async (req, res) => {
+    app.post("/comment-feedback",verifyToken, async (req, res) => {
       const data = req.body;
       const result = await feedCollection.insertOne(data);
       res.send(result);
@@ -407,7 +518,7 @@ async function run() {
       res.send({ isExist: result ? true : false });
     });
 
-    app.get("/estimated-data", async (req, res) => {
+    app.get("/estimated-data",verifyToken,verifyAdmin, async (req, res) => {
       const users = await userCollection.estimatedDocumentCount();
       const post = await postCollection.estimatedDocumentCount();
       const comment = await commentCollection.estimatedDocumentCount();
@@ -419,7 +530,7 @@ async function run() {
       ]);
     });
 
-    app.post("/add-tag", async (req, res) => {
+    app.post("/add-tag",verifyToken,verifyAdmin, async (req, res) => {
       const data = req.body;
       const result = await tagCollection.insertOne(data);
       res.send(result);
@@ -430,7 +541,7 @@ async function run() {
       // console.log(result);
       res.send(result);
     });
-    app.patch("/make-admin", async (req, res) => {
+    app.patch("/make-admin",verifyToken,verifyAdmin, async (req, res) => {
       const email = req.body.email;
       const query = { email: email };
       const updateDoc = {
@@ -443,7 +554,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/all-feed", async (req, res) => {
+    app.get("/all-feed",verifyToken,verifyAdmin, async (req, res) => {
       const result = await feedCollection
         .aggregate([
           {
@@ -573,7 +684,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/store-announcement", async (req, res) => {
+    app.post("/store-announcement",verifyToken,verifyAdmin, async (req, res) => {
       const data = req.body;
       const result = await announcementCollection.insertOne(data);
       res.send(result);
@@ -584,7 +695,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/report-action", async (req, res) => {
+    app.post("/report-action",verifyToken,verifyAdmin, async (req, res) => {
       const data = req.body;
       const action = data.action;
       const deleteCommentQuery = { _id: new ObjectId(data.commentId) };
@@ -627,7 +738,7 @@ async function run() {
       }
     });
 
-    app.post("/create-payment-intent", async (req, res) => {
+    app.post("/create-payment-intent",verifyToken, async (req, res) => {
       const { pay } = req.body;
       console.log(pay);
       const payAbleAmount = pay * 100;
@@ -638,11 +749,11 @@ async function run() {
         payment_method_types: ["card"],
       });
       // const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentOfUser);
-      console.log(paymentIntent);
+      console.log(paymentIntent.client_secret);
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
-    app.post("/payment", async (req, res) => {
+    app.post("/payment",verifyToken, async (req, res) => {
       const data = req.body;
       const query = { email: req.body.email };
       const updateDoc = {
@@ -650,12 +761,17 @@ async function run() {
           isMember: true,
         },
       };
-      const storeInPay = await paymentCollection.insertMany(data);
+      data["subscriptionEndDate"] = new Date(
+        new Date().setMonth(new Date().getMonth() + 1)
+      );
+      console.log(data);
+      const storeInPay = await paymentCollection.insertOne(data);
       const changeMemberStatus = await userCollection.updateOne(
         query,
         updateDoc
       );
       res.send({ storeInPay, changeMemberStatus });
+      // res.send({});
     });
 
     await client.db("admin").command({ ping: 1 });
