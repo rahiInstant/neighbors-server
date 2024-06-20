@@ -630,24 +630,32 @@ async function run() {
     app.post("/create-payment-intent", async (req, res) => {
       const { pay } = req.body;
       console.log(pay);
+      const payAbleAmount = pay * 100;
+
       const paymentIntent = await stripe.paymentIntents.create({
-        amount: pay * 100,
+        amount: payAbleAmount,
         currency: "usd",
         payment_method_types: ["card"],
       });
+      // const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentOfUser);
+      console.log(paymentIntent);
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
     app.post("/payment", async (req, res) => {
       const data = req.body;
-      const query = {email:req.body.email}
+      const query = { email: req.body.email };
       const updateDoc = {
-        $set:{
-          
-        }
-      }
-      const storeInPay = await paymentCollection.insertMany(data)
-
+        $set: {
+          isMember: true,
+        },
+      };
+      const storeInPay = await paymentCollection.insertMany(data);
+      const changeMemberStatus = await userCollection.updateOne(
+        query,
+        updateDoc
+      );
+      res.send({ storeInPay, changeMemberStatus });
     });
 
     await client.db("admin").command({ ping: 1 });
