@@ -10,7 +10,7 @@ const port = process.env.PORT || 5000;
 
 app.use(
   cors({
-    origin: ["http://localhost:5173"],
+    origin: ["http://localhost:5173", "https://neighbors-48cfb.web.app"],
     credentials: true,
   })
 );
@@ -34,10 +34,27 @@ const client = new MongoClient(uri, {
     deprecationErrors: true,
   },
 });
+const verifyToken = (req, res, next) => {
+  // console.log(req.headers.authorization);
+  if (!req.headers.authorization) {
+    return res.status(401).send({ message: "unauthorize" });
+  }
+  // console.log("buy buy");
+  const token = req.headers.authorization.split(" ")[1];
+  // console.log(token);
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, dec) => {
+    if (err) {
+      // console.log(err.message, err.name);
+      return res.status(403).send({ message: "forbidden access" });
+    }
+    req.decode = dec;
+    next();
+  });
+};
 
 async function run() {
   try {
-    await client.connect();
+    // await client.connect();
 
     // aggregate Obj
 
@@ -54,24 +71,9 @@ async function run() {
 
     // common parts
     const logger = () => {};
-    const verifyToken = (req, res, next) => {
-      if (!req.headers.authorization) {
-        return res.status(401).send({ message: "forbidden access" });
-      }
-      const token = req.headers.authorization.split("_")[1];
-      console.log(token);
-      jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decode) => {
-        if (err) {
-          console.log(err);
-          return res.status(403).send({ message: "unauthorized" });
-        }
-        req.decode = decode;
-        console.log(req.decode);
-        next();
-      });
-    };
 
     const verifyAdmin = async (req, res, next) => {
+      console.log(req);
       const email = req.decode.email;
       const filter = { email: email };
       const option = {
@@ -80,7 +82,7 @@ async function run() {
       const result = await userCollection.findOne(filter, option);
       console.log(result);
       if (result) {
-        if (!result.isAdmin) {
+        if (!result?.isAdmin) {
           return res.status(403).send({ message: "forbidden access" });
         }
         next();
@@ -111,7 +113,8 @@ async function run() {
 
     app.get("/user-info", verifyToken, async (req, res) => {
       const email = req.query?.email;
-      const filter = { email: email };
+      console.log("from user info", req.decode);
+      // const filter = { email: email };
       const result = await userCollection
         .aggregate([
           {
@@ -205,6 +208,10 @@ async function run() {
     });
 
     // user post related API
+    app.get("/posts", async (req, res) => {
+      const result = await postCollection.find().toArray();
+      res.send(result);
+    });
     app.post("/user-post", verifyToken, async (req, res) => {
       const data = req.body;
       // data["postingTime"] = new Date();
@@ -353,7 +360,7 @@ async function run() {
       res.send([await countFunc(), result]);
     });
 
-    app.delete("/delete-post",verifyToken, async (req, res) => {
+    app.delete("/delete-post", verifyToken, async (req, res) => {
       const postId = req.query?.postId;
       const query = { _id: new ObjectId(postId) };
       const result = await postCollection.deleteOne(query);
@@ -410,12 +417,12 @@ async function run() {
       res.send(result[0]);
     });
 
-    app.post("/user-comment",verifyToken, async (req, res) => {
+    app.post("/user-comment", async (req, res) => {
       const data = req.body;
       const result = await commentCollection.insertOne(data);
       res.send(result);
     });
-    app.get("/all-user-comment",verifyToken, async (req, res) => {
+    app.get("/all-user-comment", async (req, res) => {
       const postId = req.query.postId;
       const result = await commentCollection
         .aggregate([
@@ -488,6 +495,7 @@ async function run() {
           },
         ])
         .toArray();
+      console.log(result);
       res.send(result);
     });
 
@@ -504,7 +512,7 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/comment-feedback",verifyToken, async (req, res) => {
+    app.post("/comment-feedback", verifyToken, async (req, res) => {
       const data = req.body;
       const result = await feedCollection.insertOne(data);
       res.send(result);
@@ -518,7 +526,7 @@ async function run() {
       res.send({ isExist: result ? true : false });
     });
 
-    app.get("/estimated-data",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/estimated-data", verifyToken, verifyAdmin, async (req, res) => {
       const users = await userCollection.estimatedDocumentCount();
       const post = await postCollection.estimatedDocumentCount();
       const comment = await commentCollection.estimatedDocumentCount();
@@ -530,7 +538,7 @@ async function run() {
       ]);
     });
 
-    app.post("/add-tag",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/add-tag", verifyToken, verifyAdmin, async (req, res) => {
       const data = req.body;
       const result = await tagCollection.insertOne(data);
       res.send(result);
@@ -541,7 +549,7 @@ async function run() {
       // console.log(result);
       res.send(result);
     });
-    app.patch("/make-admin",verifyToken,verifyAdmin, async (req, res) => {
+    app.patch("/make-admin", verifyToken, verifyAdmin, async (req, res) => {
       const email = req.body.email;
       const query = { email: email };
       const updateDoc = {
@@ -554,7 +562,7 @@ async function run() {
       res.send(result);
     });
 
-    app.get("/all-feed",verifyToken,verifyAdmin, async (req, res) => {
+    app.get("/all-feed", verifyToken, verifyAdmin, async (req, res) => {
       const result = await feedCollection
         .aggregate([
           {
@@ -684,18 +692,23 @@ async function run() {
       res.send(result);
     });
 
-    app.post("/store-announcement",verifyToken,verifyAdmin, async (req, res) => {
-      const data = req.body;
-      const result = await announcementCollection.insertOne(data);
-      res.send(result);
-    });
+    app.post(
+      "/store-announcement",
+      verifyToken,
+      verifyAdmin,
+      async (req, res) => {
+        const data = req.body;
+        const result = await announcementCollection.insertOne(data);
+        res.send(result);
+      }
+    );
 
     app.get("/get-announcement", async (req, res) => {
       const result = await announcementCollection.find().toArray();
       res.send(result);
     });
 
-    app.post("/report-action",verifyToken,verifyAdmin, async (req, res) => {
+    app.post("/report-action", verifyToken, verifyAdmin, async (req, res) => {
       const data = req.body;
       const action = data.action;
       const deleteCommentQuery = { _id: new ObjectId(data.commentId) };
@@ -738,7 +751,7 @@ async function run() {
       }
     });
 
-    app.post("/create-payment-intent",verifyToken, async (req, res) => {
+    app.post("/create-payment-intent", verifyToken, async (req, res) => {
       const { pay } = req.body;
       console.log(pay);
       const payAbleAmount = pay * 100;
@@ -753,7 +766,7 @@ async function run() {
       res.send({ clientSecret: paymentIntent.client_secret });
     });
 
-    app.post("/payment",verifyToken, async (req, res) => {
+    app.post("/payment", verifyToken, async (req, res) => {
       const data = req.body;
       const query = { email: req.body.email };
       const updateDoc = {
@@ -774,7 +787,7 @@ async function run() {
       // res.send({});
     });
 
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
     console.log(
       "Pinged your deployment. You successfully connected to MongoDB!"
     );
