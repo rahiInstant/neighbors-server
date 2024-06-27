@@ -2,7 +2,7 @@ const express = require("express");
 const app = express();
 require("dotenv").config();
 const admin = require("firebase-admin");
-const serviceAccount = require(process.env.FIREBASE_ADMIN_SDK_PATH);
+const serviceAccount = require("./neighbors-48cfb-firebase-adminsdk-e6j9r-d947c8575f.json");
 const cors = require("cors");
 const jwt = require("jsonwebtoken");
 const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
